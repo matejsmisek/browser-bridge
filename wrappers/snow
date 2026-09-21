@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# snow wrapper: send externalbrowser SSO logins to a browser-bridge agent.
+# Install by pointing ~/.local/bin/snow at this file (install-hub.sh --snow does it).
+here="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+export BROWSER="${here}/../bin/bb-open"
+exec "${REAL_SNOW:-${UV_TOOL_DIR:-${HOME}/.local/share/uv/tools}/snowflake-cli/bin/snow}" "$@"

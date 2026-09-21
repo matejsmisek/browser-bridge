@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""Open a URL in the browser of a connected browser-bridge agent.
+
+Works as $BROWSER: tools that wait for a redirect on localhost:<port> (OAuth, Snowflake
+externalbrowser, ...) are detected from the calling process, and the redirect is routed
+back here. Exits non-zero when no agent can open it, so tools fall back to printing the URL.
+"""
+import argparse
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+HUB = os.environ.get("BROWSER_BRIDGE_HUB", "http://127.0.0.1:7788")
+
+parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+parser.add_argument("url")
+parser.add_argument("--port", type=int, help="callback port to route back (default: autodetect)")
+parser.add_argument("--agent", help="agent to use (default: the hub's default agent)")
+args = parser.parse_args()
+
+payload = {"url": args.url, "pid": os.getppid(), "port": args.port, "agent": args.agent}
+req = urllib.request.Request(HUB + "/api/open", data=json.dumps(payload).encode(),
+                             headers={"Content-Type": "application/json"})
+try:
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        res = json.load(resp)
+except urllib.error.HTTPError as e:
+    try:
+        error = json.load(e).get("error")
+    except ValueError:
+        error = e.reason
+    sys.exit("browser-bridge: %s" % error)
+except OSError as e:
+    sys.exit("browser-bridge: hub not reachable at %s (%s)" % (HUB, e))
+
+print("browser-bridge: opened on %s%s" % (res["agent"], ", waiting for redirect on port %d" % res["port"] if res.get("port") else ""),
+      file=sys.stderr)

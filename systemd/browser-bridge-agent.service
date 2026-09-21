@@ -1,0 +1,14 @@
+[Unit]
+Description=browser-bridge agent
+PartOf=@TARGET@
+After=@TARGET@
+
+[Service]
+ExecStart=@PYTHON@ @REPO@/bridge/agent.py run
+Restart=always
+RestartSec=5
+# A browser started by the agent must survive agent restarts.
+KillMode=process
+
+[Install]
+WantedBy=@TARGET@

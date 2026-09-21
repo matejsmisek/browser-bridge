@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Browser Bridge</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --border: #e3e6eb; --text: #1b1f24; --muted: #667080;
+  --ok: #1a7f4b; --ok-bg: #e3f5eb; --warn: #9a6200; --warn-bg: #fdf1dc;
+  --bad: #b42318; --bad-bg: #fde8e6; --info: #2657c9; --info-bg: #e6edfc;
+  --accent: #2657c9;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1216; --panel: #171b21; --border: #2a3039; --text: #e6e9ee; --muted: #8b95a5;
+    --ok: #4cc38a; --ok-bg: #12301f; --warn: #e3a93b; --warn-bg: #33270f;
+    --bad: #f07167; --bad-bg: #3a1614; --info: #7aa2f7; --info-bg: #17223a;
+    --accent: #7aa2f7;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { font-size: 20px; margin: 0; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 28px 0 10px; }
+.meta { color: var(--muted); font-size: 12px; }
+.banner { margin-top: 16px; padding: 12px 14px; border-radius: 8px; border: 1px solid var(--border); font-weight: 500; }
+.banner.ok { background: var(--ok-bg); color: var(--ok); border-color: transparent; }
+.banner.bad { background: var(--bad-bg); color: var(--bad); border-color: transparent; }
+.agents { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+.card .top { display: flex; align-items: center; gap: 8px; }
+.card .name { font-weight: 600; font-size: 15px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.on { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-bg); }
+.card dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 10px 0 12px; font-size: 12px; }
+.card dt { color: var(--muted); }
+.card dd { margin: 0; overflow-wrap: anywhere; }
+.actions { display: flex; gap: 8px; }
+button { font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+.tag { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--info-bg); color: var(--info); }
+.empty { color: var(--muted); padding: 14px; background: var(--panel); border: 1px dashed var(--border); border-radius: 8px; }
+.table { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.row { display: grid; grid-template-columns: 76px 90px minmax(0, 1.3fr) minmax(0, 1fr) 80px 56px; gap: 12px; padding: 9px 14px; border-top: 1px solid var(--border); align-items: center; cursor: pointer; }
+.row:first-child { border-top: 0; }
+.row.head { cursor: default; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; background: transparent; }
+.row:not(.head):hover { background: var(--bg); }
+.trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.pill { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; }
+.s-done { background: var(--ok-bg); color: var(--ok); }
+.s-opened, .s-callback, .s-queued { background: var(--info-bg); color: var(--info); }
+.s-closed, .s-expired { background: var(--warn-bg); color: var(--warn); }
+.s-failed, .s-no_agent { background: var(--bad-bg); color: var(--bad); }
+.detail { display: none; padding: 4px 14px 14px 102px; border-top: 1px dashed var(--border); font-size: 12px; }
+.detail.open { display: block; }
+.detail .url { color: var(--muted); overflow-wrap: anywhere; margin: 8px 0; }
+.detail ol { list-style: none; padding: 0; margin: 0; }
+.detail li { display: grid; grid-template-columns: 70px 1fr; gap: 10px; }
+.detail li span:first-child { color: var(--muted); }
+.muted { color: var(--muted); }
+@media (max-width: 720px) {
+  .row { grid-template-columns: 64px 1fr 76px; }
+  .row > :nth-child(3), .row > :nth-child(4), .row > :nth-child(6) { display: none; }
+  .row > :nth-child(2) { order: 0; }
+  .detail { padding-left: 14px; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Browser Bridge</h1>
+    <span class="meta" id="hubmeta">connecting…</span>
+  </header>
+  <div class="banner" id="banner">Loading…</div>
+
+  <h2>Agents</h2>
+  <div id="agents" class="agents"></div>
+
+  <h2>Requests</h2>
+  <div class="table" id="requests"></div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const open = new Set();
+let last = null;
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const ago = (t, now) => {
+  const s = Math.max(0, Math.round(now - t));
+  if (s < 60) return s + "s ago";
+  if (s < 3600) return Math.round(s / 60) + "m ago";
+  if (s < 86400) return Math.round(s / 3600) + "h ago";
+  return new Date(t * 1000).toLocaleDateString();
+};
+const clock = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const shortUrl = (u) => { try { const x = new URL(u); return x.host + (x.pathname.length > 1 ? x.pathname : ""); } catch { return u; } };
+const label = { queued: "queued", opened: "opened", callback: "redirected", done: "done", closed: "abandoned", expired: "expired", failed: "failed", no_agent: "no agent" };
+
+async function post(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  refresh();
+  return r;
+}
+
+function renderAgents(d) {
+  const agents = d.agents;
+  const ready = agents.filter((a) => a.connected);
+  const target = ready.find((a) => a.default) || ready.sort((a, b) => b.last_seen - a.last_seen)[0];
+  const b = $("banner");
+  if (target) {
+    b.className = "banner ok";
+    b.textContent = `Ready: new requests go to ${target.name}.`;
+  } else {
+    b.className = "banner bad";
+    b.textContent = "No agent connected: tools fall back to printing the URL for copy/paste.";
+  }
+  if (!agents.length) {
+    $("agents").innerHTML = `<div class="empty">No agent has connected yet. Run <span class="mono">./install-agent.sh</span> on your PC.</div>`;
+    return;
+  }
+  $("agents").innerHTML = agents.map((a) => `
+    <div class="card">
+      <div class="top">
+        <span class="dot ${a.connected ? "on" : ""}"></span>
+        <span class="name">${esc(a.name)}</span>
+        ${a.default ? '<span class="tag">default</span>' : ""}
+        <span class="meta" style="margin-left:auto">${a.connected ? "connected" : "offline · " + ago(a.last_seen, d.hub.now)}</span>
+      </div>
+      <dl>
+        <dt>Address</dt><dd class="mono">${esc(a.ip || "–")}</dd>
+        <dt>Browser</dt><dd>${esc(a.browser || "system default")}</dd>
+        <dt>Version</dt><dd>${esc(a.version || "–")}</dd>
+      </dl>
+      <div class="actions">
+        <button data-test="${esc(a.name)}" ${a.connected ? "" : "disabled"}>Send test</button>
+        ${a.default
+          ? `<button data-default="">Clear default</button>`
+          : `<button data-default="${esc(a.name)}">Make default</button>`}
+      </div>
+    </div>`).join("");
+}
+
+function renderRequests(d) {
+  const rows = d.requests;
+  if (!rows.length) {
+    $("requests").innerHTML = `<div class="empty" style="border:0">No requests yet.</div>`;
+    return;
+  }
+  const head = `<div class="row head"><span>Time</span><span>Status</span><span>Source</span><span>URL</span><span>Agent</span><span>Took</span></div>`;
+  $("requests").innerHTML = head + rows.map((r) => {
+    const took = r.finished ? Math.max(0, Math.round(r.finished - r.created)) + "s" : "…";
+    const events = r.events.map(([t, text]) => `<li><span>${clock(t)}</span><span>${esc(text)}</span></li>`).join("");
+    return `
+      <div class="row" data-row="${r.id}">
+        <span class="muted" title="${esc(new Date(r.created * 1000).toLocaleString())}">${ago(r.created, d.hub.now)}</span>
+        <span><span class="pill s-${r.status}">${label[r.status] || r.status}</span></span>
+        <span class="trunc mono" title="${esc(r.source)}">${esc(r.source)}</span>
+        <span class="trunc" title="${esc(r.url)}">${esc(shortUrl(r.url))}${r.port && !shortUrl(r.url).includes(":" + r.port) ? ` <span class="muted mono">:${r.port}</span>` : ""}</span>
+        <span class="trunc">${esc(r.agent || "–")}</span>
+        <span class="muted">${took}</span>
+      </div>
+      <div class="detail ${open.has(r.id) ? "open" : ""}" data-detail="${r.id}">
+        <div class="url mono">${esc(r.url)}</div>
+        <ol>${events}</ol>
+      </div>`;
+  }).join("");
+}
+
+async function refresh() {
+  try {
+    const d = await (await fetch("/api/status", { cache: "no-store" })).json();
+    last = d;
+    const up = Math.round((d.hub.now - d.hub.started) / 60);
+    $("hubmeta").textContent = `hub v${d.hub.version} · relay ${d.hub.relay_addr} · up ${up < 60 ? up + "m" : Math.round(up / 60) + "h"}`;
+    renderAgents(d);
+    renderRequests(d);
+  } catch (e) {
+    $("banner").className = "banner bad";
+    $("banner").textContent = "Hub unreachable: " + e.message;
+  }
+}
+
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-test]");
+  if (t) { t.disabled = true; post("/api/test", { agent: t.dataset.test }); return; }
+  const d = e.target.closest("[data-default]");
+  if (d) { post("/api/default", { agent: d.dataset.default || null }); return; }
+  const row = e.target.closest("[data-row]");
+  if (row) {
+    const id = row.dataset.row;
+    open.has(id) ? open.delete(id) : open.add(id);
+    document.querySelector(`[data-detail="${id}"]`)?.classList.toggle("open");
+  }
+});
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

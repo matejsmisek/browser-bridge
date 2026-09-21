@@ -1,0 +1,12 @@
+[Unit]
+Description=browser-bridge hub
+After=network-online.target
+
+[Service]
+ExecStart=@PYTHON@ @REPO@/bridge/hub.py
+# The Tailscale address may not exist yet at boot; keep retrying.
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
