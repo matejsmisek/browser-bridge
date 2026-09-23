@@ -161,6 +161,27 @@ def pipe(src, dst):
                 pass
 
 
+def read_request_head(sock, limit=65536, timeout=5):
+    """Read up to the end of the HTTP request head, so it goes upstream in one write.
+
+    Callback listeners such as the Snowflake connector parse the request from a single
+    recv(). Over Tailscale a long `GET /?token=...` line arrives in several segments, and
+    forwarding them one by one hands the listener a cut-off request line."""
+    buf = b""
+    sock.settimeout(timeout)
+    try:
+        while b"\r\n\r\n" not in buf and len(buf) < limit:
+            data = sock.recv(65536)
+            if not data:
+                break
+            buf += data
+    except OSError:
+        pass
+    finally:
+        sock.settimeout(None)
+    return buf
+
+
 class Relay:
     """Expose a loopback-only listener on the hub's Tailscale address."""
 
@@ -197,6 +218,12 @@ class Relay:
             client.close()
             return
         mark_callback(self.req_id, "callback relayed from %s" % peer[0])
+        head = read_request_head(client)
+        if head:
+            try:
+                upstream.sendall(head)
+            except OSError:
+                pass
         threading.Thread(target=pipe, args=(client, upstream), daemon=True).start()
         pipe(upstream, client)
         client.close()
