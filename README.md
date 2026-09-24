@@ -84,6 +84,26 @@ most recently active connected agent. `bb-open --agent <name> <url>` targets one
 - The status page and its test/default buttons need no auth. Anyone who can reach the hub
   port (your tailnet) can see request URLs, so don't expose it beyond the tailnet.
 
+## Similar tools
+
+- [VS Code Remote-SSH](https://code.visualstudio.com/docs/remote/ssh) sets `$BROWSER` in its
+  integrated terminal and auto-forwards ports that remote processes listen on. It only works
+  in a terminal inside a VS Code window, not over plain SSH, in tmux or in background jobs.
+- [ssh-open](https://github.com/arthursn/ssh-open) brings the same behaviour to plain SSH:
+  a reverse tunnel carries URLs to the desktop, and `localhost` ports found in the URL are
+  forwarded back. It needs a live SSH session, and the callback port has to appear in the URL.
+- [opener](https://github.com/superbrothers/opener),
+  [lemonade](https://github.com/lemonade-command/lemonade) and
+  [local-open](https://github.com/suan/local-open) open remote URLs on the desktop, but do not
+  forward the login callback.
+- Without a tool: forward the callback port by hand with `ssh -L`, or use a device-code login
+  (`gcloud --no-browser`, `az login --use-device-code`) where the tool offers one.
+
+browser-bridge needs no SSH session: it runs over Tailscale, so it also works from tmux,
+detached jobs and coding agents. It finds the callback port from the sockets the calling
+process listens on, so it works when the port is not in the URL, as with Snowflake
+`externalbrowser`. It can also route to several desktops and to a chosen browser profile.
+
 ## Files
 
 | Path | Where it runs |
