@@ -5,6 +5,7 @@ Works as $BROWSER: tools that wait for a redirect on localhost:<port> (OAuth, Sn
 externalbrowser, ...) are detected from the calling process, and the redirect is routed
 back here. Exits non-zero when no agent can open it, so tools fall back to printing the URL.
 """
+
 import argparse
 import json
 import os
@@ -21,8 +22,11 @@ parser.add_argument("--agent", help="agent to use (default: the hub's default ag
 args = parser.parse_args()
 
 payload = {"url": args.url, "pid": os.getppid(), "port": args.port, "agent": args.agent}
-req = urllib.request.Request(HUB + "/api/open", data=json.dumps(payload).encode(),
-                             headers={"Content-Type": "application/json"})
+req = urllib.request.Request(
+    HUB + "/api/open",
+    data=json.dumps(payload).encode(),
+    headers={"Content-Type": "application/json"},
+)
 try:
     with urllib.request.urlopen(req, timeout=30) as resp:
         res = json.load(resp)
@@ -35,5 +39,8 @@ except urllib.error.HTTPError as e:
 except OSError as e:
     sys.exit("browser-bridge: hub not reachable at %s (%s)" % (HUB, e))
 
-print("browser-bridge: opened on %s%s" % (res["agent"], ", waiting for redirect on port %d" % res["port"] if res.get("port") else ""),
-      file=sys.stderr)
+print(
+    "browser-bridge: opened on %s%s"
+    % (res["agent"], ", waiting for redirect on port %d" % res["port"] if res.get("port") else ""),
+    file=sys.stderr,
+)

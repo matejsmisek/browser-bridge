@@ -6,6 +6,7 @@ specific Chrome profile) and, when the requesting tool waits for a redirect on
 localhost:<port>, forwards this machine's localhost:<port> to the hub for a few minutes.
 Standard library only.
 """
+
 import argparse
 import getpass
 import json
@@ -43,6 +44,7 @@ def log(msg):
 
 # ---------------------------------------------------------------- config
 
+
 def load_config():
     with open(CONFIG_FILE) as f:
         cfg = json.load(f)
@@ -64,25 +66,40 @@ def chrome_profiles():
         if not exe:
             continue
         for directory, info in sorted(cache.items()):
-            found.append({"browser": label, "exe": exe, "dir": directory,
-                          "name": info.get("name") or directory, "email": info.get("user_name") or ""})
+            found.append(
+                {
+                    "browser": label,
+                    "exe": exe,
+                    "dir": directory,
+                    "name": info.get("name") or directory,
+                    "email": info.get("user_name") or "",
+                }
+            )
     return found
 
 
 def describe_browser(cfg):
-    return cfg.get("browser_label") or ("custom: " + " ".join(cfg["browser"]) if cfg.get("browser") else None)
+    return cfg.get("browser_label") or (
+        "custom: " + " ".join(cfg["browser"]) if cfg.get("browser") else None
+    )
 
 
 # ---------------------------------------------------------------- hub API
 
+
 def hub_call(cfg, method, path, payload=None, timeout=10):
     data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(cfg["hub"].rstrip("/") + path, data=data, method=method, headers={
-        "X-Token": cfg["token"],
-        "Content-Type": "application/json",
-        "X-Agent-Version": VERSION,
-        "X-Agent-Browser": describe_browser(cfg) or "system default",
-    })
+    req = urllib.request.Request(
+        cfg["hub"].rstrip("/") + path,
+        data=data,
+        method=method,
+        headers={
+            "X-Token": cfg["token"],
+            "Content-Type": "application/json",
+            "X-Agent-Version": VERSION,
+            "X-Agent-Browser": describe_browser(cfg) or "system default",
+        },
+    )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         body = resp.read()
         return resp.status, (json.loads(body) if body else None)
@@ -132,7 +149,12 @@ def ensure_forward(cfg, job):
         listener.bind(("127.0.0.1", port))  # raises if something local already uses the port
         listener.listen(8)
         listener.settimeout(1)
-        entry = {"deadline": time.time() + FORWARD_TTL, "target": target, "job_id": job["id"], "reported": False}
+        entry = {
+            "deadline": time.time() + FORWARD_TTL,
+            "target": target,
+            "job_id": job["id"],
+            "reported": False,
+        }
         forwards[port] = entry
 
     def handle(client):
@@ -140,7 +162,10 @@ def ensure_forward(cfg, job):
             upstream = socket.create_connection(entry["target"], timeout=10)
             upstream.settimeout(None)
         except OSError as e:
-            log("forward :%d -> %s:%d failed: %s" % (port, entry["target"][0], entry["target"][1], e))
+            log(
+                "forward :%d -> %s:%d failed: %s"
+                % (port, entry["target"][0], entry["target"][1], e)
+            )
             client.close()
             return
         if not entry["reported"]:
@@ -172,6 +197,7 @@ def ensure_forward(cfg, job):
 
 # ---------------------------------------------------------------- browser
 
+
 def open_browser(cfg, url):
     cmd = cfg.get("browser")
     if not cmd:
@@ -179,14 +205,21 @@ def open_browser(cfg, url):
             raise RuntimeError("no usable browser found")
         return
     # Detached, so a Chrome started by us is not tied to the agent's lifetime.
-    subprocess.Popen(cmd + [url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                     stderr=subprocess.DEVNULL, start_new_session=True)
+    subprocess.Popen(
+        cmd + [url],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
 
 def handle_job(cfg, job):
     url = job.get("url", "")
     if not url.startswith(("http://", "https://")):
-        return report(cfg, "/api/agent/ack", {"id": job["id"], "ok": False, "error": "refusing non-http URL"})
+        return report(
+            cfg, "/api/agent/ack", {"id": job["id"], "ok": False, "error": "refusing non-http URL"}
+        )
     try:
         if job.get("port"):
             if not 1024 <= int(job["port"]) <= 65535:
@@ -202,14 +235,20 @@ def handle_job(cfg, job):
 
 # ---------------------------------------------------------------- commands
 
+
 def cmd_run(_args):
     cfg = load_config()
-    log("browser-bridge agent %s as %r -> %s (%s)" % (VERSION, cfg["name"], cfg["hub"], describe_browser(cfg) or "system default"))
+    log(
+        "browser-bridge agent %s as %r -> %s (%s)"
+        % (VERSION, cfg["name"], cfg["hub"], describe_browser(cfg) or "system default")
+    )
     backoff = 1
     connected = False
     while True:
         try:
-            status, job = hub_call(cfg, "GET", "/api/agent/poll?name=" + urllib.parse.quote(cfg["name"]), timeout=40)
+            status, job = hub_call(
+                cfg, "GET", "/api/agent/poll?name=" + urllib.parse.quote(cfg["name"]), timeout=40
+            )
             if not connected:
                 log("connected to hub")
                 connected = True
@@ -237,7 +276,10 @@ def cmd_ping(_args):
     try:
         _, res = hub_call(cfg, "GET", "/api/agent/ping")
     except urllib.error.HTTPError as e:
-        sys.exit("hub at %s answered %s (%s)" % (cfg["hub"], e.code, "bad token" if e.code == 403 else e.reason))
+        sys.exit(
+            "hub at %s answered %s (%s)"
+            % (cfg["hub"], e.code, "bad token" if e.code == 403 else e.reason)
+        )
     except OSError as e:
         sys.exit("cannot reach hub at %s: %s" % (cfg["hub"], e))
     print("hub %s reachable, version %s, token accepted" % (cfg["hub"], res["version"]))
@@ -245,7 +287,10 @@ def cmd_ping(_args):
 
 def cmd_profiles(_args):
     for i, p in enumerate(chrome_profiles(), 1):
-        print("%2d. %-16s %-12s %s%s" % (i, p["browser"], p["dir"], p["name"], " <%s>" % p["email"] if p["email"] else ""))
+        print(
+            "%2d. %-16s %-12s %s%s"
+            % (i, p["browser"], p["dir"], p["name"], " <%s>" % p["email"] if p["email"] else "")
+        )
 
 
 def ask(prompt, default=None):
@@ -261,14 +306,20 @@ def cmd_configure(args):
     except (OSError, ValueError):
         cfg = {}
     cfg["hub"] = args.hub or cfg.get("hub") or ask("Hub URL (e.g. http://my-server:7788)")
-    cfg["name"] = args.name or cfg.get("name") or ask("Name of this machine", socket.gethostname().split(".")[0])
+    cfg["name"] = (
+        args.name
+        or cfg.get("name")
+        or ask("Name of this machine", socket.gethostname().split(".")[0])
+    )
 
     if args.token:
         token = args.token
     elif os.path.exists(TOKEN_FILE):
         token = None
     else:
-        token = getpass.getpass("Hub token (on the hub: cat ~/.config/browser-bridge/token): ").strip()
+        token = getpass.getpass(
+            "Hub token (on the hub: cat ~/.config/browser-bridge/token): "
+        ).strip()
     if token:
         fd = os.open(TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
@@ -276,10 +327,16 @@ def cmd_configure(args):
 
     if not args.keep_browser or "browser" not in cfg:
         profiles = chrome_profiles()
-        print("\nWhich browser should open requests? Pick the profile where you are logged in to your SSO.")
+        print(
+            "\nWhich browser should open requests?"
+            " Pick the profile where you are logged in to your SSO."
+        )
         print(" 0. System default browser")
         for i, p in enumerate(profiles, 1):
-            print("%2d. %s: %s%s" % (i, p["browser"], p["name"], " <%s>" % p["email"] if p["email"] else ""))
+            print(
+                "%2d. %s: %s%s"
+                % (i, p["browser"], p["name"], " <%s>" % p["email"] if p["email"] else "")
+            )
         while True:
             choice = ask("Choice", "1" if profiles else "0")
             if choice.isdigit() and 0 <= int(choice) <= len(profiles):
@@ -290,7 +347,11 @@ def cmd_configure(args):
         else:
             p = profiles[int(choice) - 1]
             cfg["browser"] = [p["exe"], "--profile-directory=" + p["dir"]]
-            cfg["browser_label"] = "%s · %s%s" % (p["browser"], p["name"], " (%s)" % p["email"] if p["email"] else "")
+            cfg["browser_label"] = "%s · %s%s" % (
+                p["browser"],
+                p["name"],
+                " (%s)" % p["email"] if p["email"] else "",
+            )
 
     with open(CONFIG_FILE, "w") as f:
         json.dump(cfg, f, indent=2)
@@ -308,7 +369,9 @@ def main():
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("run", help="connect to the hub and serve requests").set_defaults(fn=cmd_run)
     sub.add_parser("ping", help="check hub reachability and token").set_defaults(fn=cmd_ping)
-    sub.add_parser("profiles", help="list Chromium-family browser profiles").set_defaults(fn=cmd_profiles)
+    sub.add_parser("profiles", help="list Chromium-family browser profiles").set_defaults(
+        fn=cmd_profiles
+    )
     p = sub.add_parser("configure", help="write ~/.config/browser-bridge/agent.json")
     p.add_argument("--hub")
     p.add_argument("--name")

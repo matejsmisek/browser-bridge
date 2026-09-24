@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: pip install black ruff
+      - name: black
+        run: black --check --diff .
+      - name: ruff
+        run: ruff check --output-format=github .
+      - name: shellcheck
+        run: shellcheck install-hub.sh install-agent.sh wrappers/snow
+
+  smoke:
+    # 3.8 is the oldest supported version; it is not available on ubuntu-24.04
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: compile
+        run: python -m py_compile bridge/hub.py bridge/agent.py bin/bb-open
+      - name: start
+        run: |
+          python bridge/hub.py --help
+          python bridge/agent.py --help
+          python bin/bb-open --help

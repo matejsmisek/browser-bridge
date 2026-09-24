@@ -1,0 +1,15 @@
+[tool.black]
+line-length = 100
+target-version = ["py38"]
+# bin/bb-open is a Python script without the .py suffix
+include = '(\.pyi?|/bin/bb-open)$'
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+extend-include = ["bin/bb-open"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+# %-formatting is the house style
+ignore = ["UP031"]
