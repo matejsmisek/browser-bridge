@@ -9,6 +9,7 @@ the agent forwards its own localhost:<port> there, so the redirect lands back he
 
 Serves a status page with connected agents and request history. Standard library only.
 """
+
 import argparse
 import collections
 import http.server
@@ -23,7 +24,9 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 VERSION = "0.1.0"
 CONFIG_DIR = os.path.expanduser("~/.config/browser-bridge")
-STATE_DIR = os.path.join(os.path.expanduser(os.environ.get("XDG_STATE_HOME", "~/.local/state")), "browser-bridge")
+STATE_DIR = os.path.join(
+    os.path.expanduser(os.environ.get("XDG_STATE_HOME", "~/.local/state")), "browser-bridge"
+)
 
 AGENT_STALE = 35  # seconds without a poll before an agent counts as disconnected
 POLL_WAIT = 25  # how long an agent's long-poll is held open
@@ -43,11 +46,12 @@ config = {}
 
 # ---------------------------------------------------------------- /proc helpers
 
+
 def _decode_addr(hexaddr):
     raw = bytes.fromhex(hexaddr)
     if len(raw) == 4:
         return socket.inet_ntop(socket.AF_INET, raw[::-1])
-    raw = b"".join(raw[i:i + 4][::-1] for i in range(0, 16, 4))
+    raw = b"".join(raw[i : i + 4][::-1] for i in range(0, 16, 4))
     return socket.inet_ntop(socket.AF_INET6, raw)
 
 
@@ -132,17 +136,18 @@ def find_callback(url, pid, port=None):
             break
         mine = [listeners[i] for i in socket_inodes(pid) if i in listeners]
         if mine:
-            addr, port = max(mine, key=lambda l: l[1])
+            addr, port = max(mine, key=lambda sock: sock[1])
             return port, addr
         pid = parent_pid(pid)
     return None, None
 
 
 def is_listening(addr, port):
-    return any(l == (addr, port) for l in listening_sockets().values())
+    return any(sock == (addr, port) for sock in listening_sockets().values())
 
 
 # ---------------------------------------------------------------- TCP relay
+
 
 def pipe(src, dst):
     try:
@@ -235,6 +240,7 @@ class Relay:
 
 
 # ---------------------------------------------------------------- requests & agents
+
 
 def now():
     return time.time()
@@ -330,9 +336,15 @@ def dispatch(req, target, wait):
                 return 500
             relays[req["id"]] = relay
             job.update(port=req["port"], forward_host=config["relay_addr"], forward_port=relay.port)
-            log_event(req, "relaying %s:%d → %s:%d" % (config["relay_addr"], relay.port, req["bind"], req["port"]))
+            log_event(
+                req,
+                "relaying %s:%d → %s:%d"
+                % (config["relay_addr"], relay.port, req["bind"], req["port"]),
+            )
         else:
-            job.update(port=req["port"], forward_host=config["relay_addr"], forward_port=req["port"])
+            job.update(
+                port=req["port"], forward_host=config["relay_addr"], forward_port=req["port"]
+            )
     agent["queue"].append(job)
     log_event(req, "queued for %s" % agent["name"])
     cv.notify_all()
@@ -356,7 +368,11 @@ def watcher():
         with cv:
             active = [r for r in requests.values() if r["status"] not in TERMINAL]
         for req in active:
-            gone = req["port"] and req["status"] != "queued" and not is_listening(req["bind"], req["port"])
+            gone = (
+                req["port"]
+                and req["status"] != "queued"
+                and not is_listening(req["bind"], req["port"])
+            )
             with cv:
                 if req["status"] in TERMINAL:
                     continue
@@ -396,8 +412,10 @@ def start_test_listener(agent_name):
                         client.sendall(b"HTTP/1.0 404 Not Found\r\nContent-Length: 0\r\n\r\n")
                         continue
                     body = (TEST_PAGE % agent_name).encode()
-                    client.sendall(b"HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
-                                   b"Content-Length: %d\r\n\r\n%s" % (len(body), body))
+                    client.sendall(
+                        b"HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
+                        b"Content-Length: %d\r\n\r\n%s" % (len(body), body)
+                    )
                     return
         except OSError:
             pass
@@ -410,6 +428,7 @@ def start_test_listener(agent_name):
 
 # ---------------------------------------------------------------- HTTP
 
+
 def public_request(req):
     r = dict(req)
     r.pop("listener_gone", None)
@@ -419,12 +438,24 @@ def public_request(req):
 def status_snapshot():
     with cv:
         return {
-            "hub": {"version": VERSION, "started": STARTED, "listen": config["listen"],
-                    "port": config["port"], "relay_addr": config["relay_addr"], "now": now()},
+            "hub": {
+                "version": VERSION,
+                "started": STARTED,
+                "listen": config["listen"],
+                "port": config["port"],
+                "relay_addr": config["relay_addr"],
+                "now": now(),
+            },
             "agents": [
-                {"name": a["name"], "ip": a["ip"], "version": a["version"], "browser": a["browser"],
-                 "last_seen": a["last_seen"], "connected": agent_connected(a),
-                 "default": a["name"] == state["default_agent"]}
+                {
+                    "name": a["name"],
+                    "ip": a["ip"],
+                    "version": a["version"],
+                    "browser": a["browser"],
+                    "last_seen": a["last_seen"],
+                    "connected": agent_connected(a),
+                    "default": a["name"] == state["default_agent"],
+                }
                 for a in sorted(agents.values(), key=lambda a: a["name"])
             ],
             "requests": [public_request(r) for r in reversed(list(requests.values())[-200:])],
@@ -466,7 +497,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlsplit(self.path)
         if path.path == "/":
-            return self.send(200, content_type="text/html; charset=utf-8", body=STATUS_PAGE.encode())
+            return self.send(
+                200, content_type="text/html; charset=utf-8", body=STATUS_PAGE.encode()
+            )
         if path.path == "/api/status":
             return self.send(200, status_snapshot())
         if path.path == "/api/agent/poll":
@@ -503,10 +536,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         source = data.get("source") or (describe_process(pid) if pid else None) or "unknown"
         with cv:
             req = new_request(url, source, port, bind_addr)
-            log_event(req, "requested by %s" % source + (" (callback port %d)" % port if port else ""))
+            log_event(
+                req, "requested by %s" % source + (" (callback port %d)" % port if port else "")
+            )
             code = dispatch(req, data.get("agent"), wait=True)
-            reply = {"id": req["id"], "status": req["status"], "agent": req["agent"], "port": port,
-                     "error": req["events"][-1][1] if code >= 300 else None}
+            reply = {
+                "id": req["id"],
+                "status": req["status"],
+                "agent": req["agent"],
+                "port": port,
+                "error": req["events"][-1][1] if code >= 300 else None,
+            }
         self.send(code, reply)
 
     # --- status page actions
@@ -518,7 +558,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             name = agent["name"] if agent else (target or "?")
         port = start_test_listener(name)
         with cv:
-            req = new_request("http://localhost:%d/" % port, "status page test", port, "127.0.0.1", kind="test")
+            req = new_request(
+                "http://localhost:%d/" % port, "status page test", port, "127.0.0.1", kind="test"
+            )
             log_event(req, "test requested from %s" % self.client_address[0])
             code = dispatch(req, target, wait=False)
         self.send(code if code >= 300 else 200, {"id": req["id"], "status": req["status"]})
@@ -538,10 +580,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not name:
             return self.send(400, {"error": "name required"})
         with cv:
-            agent = agents.setdefault(name, {"name": name, "queue": collections.deque(), "polling": 0,
-                                             "last_seen": 0, "ip": None, "version": None, "browser": None})
-            agent.update(ip=self.client_address[0], version=self.headers.get("X-Agent-Version"),
-                         browser=self.headers.get("X-Agent-Browser"), last_seen=now())
+            agent = agents.setdefault(
+                name,
+                {
+                    "name": name,
+                    "queue": collections.deque(),
+                    "polling": 0,
+                    "last_seen": 0,
+                    "ip": None,
+                    "version": None,
+                    "browser": None,
+                },
+            )
+            agent.update(
+                ip=self.client_address[0],
+                version=self.headers.get("X-Agent-Version"),
+                browser=self.headers.get("X-Agent-Browser"),
+                last_seen=now(),
+            )
             agent["polling"] += 1
             deadline = now() + POLL_WAIT
             try:
@@ -582,6 +638,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 # ---------------------------------------------------------------- config & main
 
+
 def save_state():
     os.makedirs(STATE_DIR, exist_ok=True)
     with open(os.path.join(STATE_DIR, "state.json"), "w") as f:
@@ -595,7 +652,9 @@ def load():
         config["token"] = f.read().strip()
     config.setdefault("port", 7788)
     config.setdefault("listen", ["127.0.0.1"])
-    config.setdefault("relay_addr", next((a for a in config["listen"] if not a.startswith("127.")), "127.0.0.1"))
+    config.setdefault(
+        "relay_addr", next((a for a in config["listen"] if not a.startswith("127.")), "127.0.0.1")
+    )
     try:
         with open(os.path.join(STATE_DIR, "state.json")) as f:
             state.update(json.load(f))
@@ -621,8 +680,11 @@ def main():
         servers.append(server)
     for server in servers:
         threading.Thread(target=server.serve_forever, daemon=True).start()
-    print("browser-bridge hub %s on %s port %d, relay via %s" % (
-        VERSION, ", ".join(config["listen"]), config["port"], config["relay_addr"]), flush=True)
+    print(
+        "browser-bridge hub %s on %s port %d, relay via %s"
+        % (VERSION, ", ".join(config["listen"]), config["port"], config["relay_addr"]),
+        flush=True,
+    )
     watcher()
 
 
