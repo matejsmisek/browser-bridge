@@ -1,5 +1,7 @@
 # browser-bridge
 
+[![CI](https://github.com/matejsmisek/browser-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/matejsmisek/browser-bridge/actions/workflows/ci.yml)
+
 Open URLs from a headless server in the browser on your desktop, including SSO / OAuth
 logins that redirect back to `localhost:<port>` (Snowflake `externalbrowser`, gcloud, gh, …).
 
@@ -94,6 +96,21 @@ most recently active connected agent. `bb-open --agent <name> <url>` targets one
 State: `~/.config/browser-bridge/` (config, token), `~/.local/state/browser-bridge/`
 (hub history and default agent).
 
+## Development
+
+CI runs black, ruff and shellcheck, and checks the scripts start on Python 3.8 and 3.13.
+To run the same checks locally:
+
+```
+pipx run black --check .
+pipx run ruff check .
+shellcheck install-hub.sh install-agent.sh wrappers/snow
+```
+
 ## Uninstall
 
 `./install-hub.sh --uninstall` or `./install-agent.sh --uninstall`. Config is kept.
+
+## License
+
+[MIT](LICENSE)
