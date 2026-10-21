@@ -29,7 +29,7 @@ If no agent is connected, `bb-open` exits non-zero and tools fall back to their 
 The hub serves a status page at `http://<server>:7788/` showing connected agents, a test
 button per agent, and the history of requests with a timeline for each.
 
-Python 3.8+ standard library only. Linux with systemd on both sides.
+Python 3.8+ standard library only. Linux (systemd) or macOS (launchd) on either side.
 
 ## Install the hub (server)
 
@@ -40,8 +40,8 @@ git clone <repo> ~/browser-bridge && cd ~/browser-bridge
 
 This creates `~/.config/browser-bridge/{token,hub.json}`, installs the
 `browser-bridge-hub` user service, and links `bb-open` into `~/.local/bin`. The hub listens on
-`127.0.0.1` and the Tailscale IP. Keep lingering on (`loginctl enable-linger`) so it runs
-without an open session.
+`127.0.0.1` and the Tailscale IP. On Linux, keep lingering on (`loginctl enable-linger`) so it
+runs without an open session. On macOS it is a LaunchAgent, so it runs while you are logged in.
 
 Then make tools use it:
 
@@ -69,12 +69,39 @@ on the status page.
 
 - `./install-agent.sh --reconfigure` picks a different browser profile.
 - `python3 bridge/agent.py profiles` lists the profiles it can see.
-- `journalctl --user -u browser-bridge-agent -f` shows the agent's log.
+- `journalctl --user -u browser-bridge-agent -f` (Linux) or
+  `tail -f ~/Library/Logs/browser-bridge-agent.log` (macOS) shows the agent's log.
 
 ## Several agents
 
 Every agent appears on the status page. Requests go to the one marked **default**, or to the
 most recently active connected agent. `bb-open --agent <name> <url>` targets one explicitly.
+
+## Phone (iOS)
+
+A phone cannot run an agent: iOS suspends an app that waits on `localhost` as soon as you
+switch to the browser. Instead, the hub sends the URL to the phone as an
+[ntfy](https://ntfy.sh) push, and you give the redirect back to the hub by hand:
+
+1. Install the ntfy app on the phone and subscribe to a topic with a long random name.
+2. Add the topic and the phone's Tailscale IP to `~/.config/browser-bridge/hub.json` and
+   restart the hub: `"ntfy": "https://ntfy.sh/<topic>", "phone_ip": "100.x.y.z"`. Without
+   `phone_ip`, any tailnet node can finish a phone login with a token of its own.
+3. In Shortcuts, make a share-sheet shortcut that accepts URLs and text (clipboard when there
+   is no input), replaces the regular expression `^https?://(localhost|127\.0\.0\.1):` with
+   `http://<hub>:7788/finish/`, and opens the result.
+
+When no agent is connected, requests go to the phone. `bb-open --agent phone`, or
+`BROWSER_BRIDGE_AGENT=phone` for tools that run `$BROWSER`, sends them there anyway. Tap
+the notification and log in. The browser then fails to load `http://localhost:<port>/...`;
+share that page (or copy its address) to the shortcut. The hub delivers the redirect to the
+tool that waits for it. Only a login sent to the phone can be finished this way, and only
+once. The phone must be on the tailnet.
+
+With `ntfy` set, `bb-open` no longer fails when no agent is connected, so tools do not fall
+back to printing the URL: every `$BROWSER` URL goes to the phone. The URLs go through the ntfy
+server, and anyone who knows the topic can send you notifications. Use a long topic name, or
+your own ntfy server.
 
 ## Security
 
@@ -111,7 +138,7 @@ process listens on, so it works when the port is not in the URL, as with Snowfla
 | `bridge/hub.py`, `bridge/status.html` | server |
 | `bin/bb-open`, `wrappers/snow` | server |
 | `bridge/agent.py` | desktop PC |
-| `install-hub.sh`, `install-agent.sh`, `systemd/` | installers and unit templates |
+| `install-hub.sh`, `install-agent.sh`, `systemd/`, `launchd/` | installers and service templates |
 
 State: `~/.config/browser-bridge/` (config, token), `~/.local/state/browser-bridge/`
 (hub history and default agent).

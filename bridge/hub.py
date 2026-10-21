@@ -18,11 +18,15 @@ import os
 import re
 import secrets
 import socket
+import subprocess
+import sys
 import threading
 import time
+import urllib.request
 from urllib.parse import parse_qs, unquote, urlsplit
 
 VERSION = "0.1.0"
+MACOS = sys.platform == "darwin"
 CONFIG_DIR = os.path.expanduser("~/.config/browser-bridge")
 STATE_DIR = os.path.join(
     os.path.expanduser(os.environ.get("XDG_STATE_HOME", "~/.local/state")), "browser-bridge"
@@ -44,7 +48,8 @@ state = {"default_agent": None}
 config = {}
 
 
-# ---------------------------------------------------------------- /proc helpers
+# ---------------------------------------------------------------- process & socket helpers
+# Linux reads /proc; macOS asks lsof and ps.
 
 
 def _decode_addr(hexaddr):
@@ -73,6 +78,51 @@ def listening_sockets():
     return out
 
 
+def run(cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def lsof_listeners(port=None, pid=None):
+    """[(addr, port)] of TCP sockets in LISTEN state, from lsof (macOS has no /proc)."""
+    cmd = [
+        "/usr/sbin/lsof",
+        "-nP",
+        "-a",
+        "-iTCP" + (":%d" % port if port else ""),
+        "-sTCP:LISTEN",
+        "-Ftn",
+    ]
+    if pid:
+        cmd += ["-p", str(pid)]
+    socks, ipv6 = [], False
+    for line in run(cmd).splitlines():
+        if line.startswith("t"):
+            ipv6 = line == "tIPv6"
+        elif line.startswith("n"):
+            addr, _, sock_port = line[1:].rpartition(":")
+            addr = addr.strip("[]")
+            if addr == "*":
+                addr = "::" if ipv6 else "0.0.0.0"
+            socks.append((addr, int(sock_port)))
+    return socks
+
+
+def all_listeners(port=None):
+    if MACOS:
+        return lsof_listeners(port=port)
+    return [s for s in listening_sockets().values() if port is None or s[1] == port]
+
+
+def pid_listeners(pid):
+    if MACOS:
+        return lsof_listeners(pid=pid)
+    listeners = listening_sockets()
+    return [listeners[i] for i in socket_inodes(pid) if i in listeners]
+
+
 def socket_inodes(pid):
     inodes = set()
     try:
@@ -90,6 +140,9 @@ def socket_inodes(pid):
 
 
 def parent_pid(pid):
+    if MACOS:
+        out = run(["/bin/ps", "-o", "ppid=", "-p", str(pid)]).strip()
+        return int(out) if out.isdigit() else 0
     try:
         with open("/proc/%d/stat" % pid) as f:
             return int(f.read().rsplit(")", 1)[1].split()[1])
@@ -97,13 +150,22 @@ def parent_pid(pid):
         return 0
 
 
-def describe_process(pid):
+def process_argv(pid):
+    if MACOS:
+        # ps joins argv with spaces, so arguments that contain spaces come back split.
+        return run(["/bin/ps", "-o", "args=", "-p", str(pid)]).split() or None
     try:
         with open("/proc/%d/cmdline" % pid, "rb") as f:
-            argv = [a.decode(errors="replace") for a in f.read().split(b"\0") if a]
+            return [a.decode(errors="replace") for a in f.read().split(b"\0") if a]
     except OSError:
         return None
-    if len(argv) > 1 and os.path.basename(argv[0]).startswith("python"):
+
+
+def describe_process(pid):
+    argv = process_argv(pid)
+    if argv is None:
+        return None
+    if len(argv) > 1 and os.path.basename(argv[0]).lower().startswith("python"):
         argv = argv[1:]
     if argv and os.path.basename(argv[0]) in ("sh", "bash", "zsh", "dash", "fish"):
         return os.path.basename(argv[0]) + " (shell)"
@@ -125,16 +187,15 @@ def port_from_url(url):
 
 def find_callback(url, pid, port=None):
     """(port, bind_addr) of the local listener waiting for the browser redirect, or (None, None)."""
-    listeners = listening_sockets()
     port = port or port_from_url(url)
     if port:
-        addrs = [a for a, p in listeners.values() if p == port]
+        addrs = [a for a, _ in all_listeners(port)]
         return port, (addrs[0] if addrs else "127.0.0.1")
     # Walk up from the requesting process: the tool itself, or the shell that ran xdg-open.
     for _ in range(3):
         if not pid or pid <= 1:
             break
-        mine = [listeners[i] for i in socket_inodes(pid) if i in listeners]
+        mine = pid_listeners(pid)
         if mine:
             addr, port = max(mine, key=lambda sock: sock[1])
             return port, addr
@@ -143,7 +204,7 @@ def find_callback(url, pid, port=None):
 
 
 def is_listening(addr, port):
-    return any(sock == (addr, port) for sock in listening_sockets().values())
+    return (addr, port) in all_listeners(port)
 
 
 # ---------------------------------------------------------------- TCP relay
@@ -321,6 +382,11 @@ def new_request(url, source, port, bind_addr, kind="open"):
 def dispatch(req, target, wait):
     """Hand a request to an agent. Caller holds cv. Returns an HTTP status code."""
     agent = choose_agent(target)
+    if not agent and config.get("ntfy") and target in (None, PHONE):
+        req["agent"] = PHONE
+        log_event(req, "sending to phone")
+        threading.Thread(target=notify_phone, args=(req,), daemon=True).start()
+        return await_pickup(req, wait)
     if not agent:
         finish(req, "no_agent", "no agent connected" + (" named %s" % target if target else ""))
         return 503
@@ -348,17 +414,96 @@ def dispatch(req, target, wait):
     agent["queue"].append(job)
     log_event(req, "queued for %s" % agent["name"])
     cv.notify_all()
+
+    def cancel():
+        if job in agent["queue"]:
+            agent["queue"].remove(job)
+
+    return await_pickup(req, wait, cancel)
+
+
+def await_pickup(req, wait, cancel=None):
+    """Wait until the request leaves "queued". Caller holds cv. Returns an HTTP status code."""
     if not wait:
         return 202
     deadline = now() + ACK_WAIT
     while req["status"] == "queued" and now() < deadline:
         cv.wait(deadline - now())
     if req["status"] == "queued":
-        if job in agent["queue"]:
-            agent["queue"].remove(job)
-        finish(req, "failed", "%s did not pick up the request" % agent["name"])
+        if cancel:
+            cancel()
+        finish(req, "failed", "%s did not pick up the request" % req["agent"])
         return 504
     return 200 if req["status"] not in ("failed", "no_agent") else 502
+
+
+# ---------------------------------------------------------------- phone
+# A phone cannot listen on its own localhost, so it cannot take an agent's place. The hub
+# sends the URL as an ntfy push instead. After the login, the browser fails to load the
+# redirect to localhost:<port>; the user rewrites it to /finish/<port>/... on the hub
+# (an iOS Shortcut does this), and the hub hands it to the tool waiting here.
+
+PHONE = "phone"
+
+
+def notify_phone(req):
+    title = "Login for %s on %s" % (req["source"], socket.gethostname().split(".")[0])
+    message = "Tap to open. After the login, share the failed localhost page to the Shortcut."
+    headers = {
+        # HTTP headers must be latin-1; the source can contain "…".
+        "Title": title.encode("ascii", "replace").decode(),
+        "Click": req["url"],
+        "Tags": "key",
+    }
+    try:
+        post = urllib.request.Request(config["ntfy"], data=message.encode(), headers=headers)
+        # Per socket operation, so the whole push can take a few times this: keep it well
+        # under ACK_WAIT, or the push arrives for a request that already failed.
+        urllib.request.urlopen(post, timeout=5).close()
+        ok, text = True, "sent to phone"
+    except (OSError, ValueError) as e:
+        ok, text = False, "phone notification failed: %s" % e
+    with cv:
+        if req["status"] in TERMINAL:
+            return
+        if not ok:
+            finish(req, "failed", text)
+            return
+        req["status"] = "opened"
+        log_event(req, text)
+        if not req["port"]:
+            finish(req, "done", "no redirect expected")
+        cv.notify_all()
+
+
+def connect_addr(bind_addr):
+    if bind_addr in ("0.0.0.0", ""):
+        return "127.0.0.1"
+    return "::1" if ":" in bind_addr else bind_addr
+
+
+def deliver_redirect(req, target):
+    """Send `GET target` to the tool's listener in one write and return its raw response."""
+    upstream = socket.create_connection((connect_addr(req["bind"]), req["port"]), timeout=10)
+    with upstream:
+        upstream.sendall(
+            (
+                "GET %s HTTP/1.1\r\nHost: localhost:%d\r\nConnection: close\r\n\r\n"
+                % (target, req["port"])
+            ).encode(
+                "latin-1"
+            )  # http.server decoded the path as latin-1
+        )
+        response = b""
+        try:
+            while True:
+                data = upstream.recv(65536)
+                if not data:
+                    break
+                response += data
+        except OSError:
+            pass  # a timeout or reset after the answer still leaves a usable response
+        return response
 
 
 def watcher():
@@ -432,6 +577,7 @@ def start_test_listener(agent_name):
 def public_request(req):
     r = dict(req)
     r.pop("listener_gone", None)
+    r.pop("claimed", None)
     return r
 
 
@@ -502,6 +648,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             )
         if path.path == "/api/status":
             return self.send(200, status_snapshot())
+        if path.path.startswith("/finish/"):
+            return self.finish_redirect()
         if path.path == "/api/agent/poll":
             return self.agent_poll(parse_qs(path.query))
         if path.path == "/api/agent/ping":
@@ -548,6 +696,51 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "error": req["events"][-1][1] if code >= 300 else None,
             }
         self.send(code, reply)
+
+    def finish_redirect(self):
+        """Phone: /finish/<port>/<path?query> delivers the redirect meant for localhost:<port>."""
+        # Without this, any tailnet node (or a page open in a tailnet browser) could hand the
+        # waiting tool its own token.
+        phone_ip = config.get("phone_ip")
+        if phone_ip and self.client_address[0] != phone_ip:
+            return self.send(403, {"error": "only %s can finish phone logins" % phone_ip})
+        m = re.match(r"/finish/(\d{2,5})(?=[/?]|$)(.*)$", self.path)
+        if not m:
+            return self.send(400, {"error": "expected /finish/<port>/..."})
+        port, target = int(m.group(1)), m.group(2)
+        if not target.startswith("/"):
+            target = "/" + target
+        with cv:
+            req = next(
+                (
+                    r
+                    for r in reversed(list(requests.values()))
+                    if r["agent"] == PHONE
+                    and r["port"] == port
+                    and r["status"] == "opened"
+                    and not r.get("claimed")
+                ),
+                None,
+            )
+            if req:
+                req["claimed"] = True  # one delivery per login
+        if not req:
+            return self.send(404, {"error": "no phone login is waiting on port %d" % port})
+        error = None
+        try:
+            response = deliver_redirect(req, target)
+            if not response:
+                error = "tool on port %d sent no response" % port
+        except OSError as e:
+            error = "tool on port %d unreachable: %s" % (port, e)
+        if error:
+            with cv:
+                req["claimed"] = False
+                log_event(req, "phone redirect failed: %s" % error)
+            return self.send(502, {"error": error})
+        mark_callback(req["id"], "redirect delivered from phone %s" % self.client_address[0])
+        self.close_connection = True
+        self.wfile.write(response)
 
     # --- status page actions
 

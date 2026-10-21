@@ -18,7 +18,11 @@ HUB = os.environ.get("BROWSER_BRIDGE_HUB", "http://127.0.0.1:7788")
 parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 parser.add_argument("url")
 parser.add_argument("--port", type=int, help="callback port to route back (default: autodetect)")
-parser.add_argument("--agent", help="agent to use (default: the hub's default agent)")
+parser.add_argument(
+    "--agent",
+    default=os.environ.get("BROWSER_BRIDGE_AGENT"),
+    help="agent to use, or phone (default: $BROWSER_BRIDGE_AGENT, else the hub's default agent)",
+)
 args = parser.parse_args()
 
 payload = {"url": args.url, "pid": os.getppid(), "port": args.port, "agent": args.agent}

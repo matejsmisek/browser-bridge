@@ -27,15 +27,24 @@ CONFIG_DIR = os.path.expanduser("~/.config/browser-bridge")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "agent.json")
 TOKEN_FILE = os.path.join(CONFIG_DIR, "token")
 FORWARD_TTL = 300
+MACOS = sys.platform == "darwin"
 
-# Chromium-family browsers: (label, user data dir, executables to try)
-CHROMIUM_BROWSERS = [
-    ("Google Chrome", "~/.config/google-chrome", ["google-chrome", "google-chrome-stable"]),
-    ("Chromium", "~/.config/chromium", ["chromium", "chromium-browser"]),
-    ("Chromium (snap)", "~/snap/chromium/common/chromium", ["chromium"]),
-    ("Brave", "~/.config/BraveSoftware/Brave-Browser", ["brave-browser", "brave"]),
-    ("Microsoft Edge", "~/.config/microsoft-edge", ["microsoft-edge", "microsoft-edge-stable"]),
-]
+# Chromium-family browsers: (label, user data dir, executables to try; app names on macOS)
+if MACOS:
+    CHROMIUM_BROWSERS = [
+        ("Google Chrome", "~/Library/Application Support/Google/Chrome", ["Google Chrome"]),
+        ("Chromium", "~/Library/Application Support/Chromium", ["Chromium"]),
+        ("Brave", "~/Library/Application Support/BraveSoftware/Brave-Browser", ["Brave Browser"]),
+        ("Microsoft Edge", "~/Library/Application Support/Microsoft Edge", ["Microsoft Edge"]),
+    ]
+else:
+    CHROMIUM_BROWSERS = [
+        ("Google Chrome", "~/.config/google-chrome", ["google-chrome", "google-chrome-stable"]),
+        ("Chromium", "~/.config/chromium", ["chromium", "chromium-browser"]),
+        ("Chromium (snap)", "~/snap/chromium/common/chromium", ["chromium"]),
+        ("Brave", "~/.config/BraveSoftware/Brave-Browser", ["brave-browser", "brave"]),
+        ("Microsoft Edge", "~/.config/microsoft-edge", ["microsoft-edge", "microsoft-edge-stable"]),
+    ]
 
 
 def log(msg):
@@ -53,23 +62,37 @@ def load_config():
     return cfg
 
 
+def launcher(names):
+    """Command prefix that starts the browser, or None when it is not installed."""
+    if MACOS:
+        for app in names:
+            for apps_dir in ("/Applications", os.path.expanduser("~/Applications")):
+                if os.path.isdir(os.path.join(apps_dir, app + ".app")):
+                    # -n starts a new launch so --args arrive; it hands the URL to the
+                    # running browser and exits.
+                    return ["open", "-na", app, "--args"]
+        return None
+    exe = next((shutil.which(e) for e in names if shutil.which(e)), None)
+    return [exe] if exe else None
+
+
 def chrome_profiles():
-    """[{browser, exe, dir, name, email}] for every installed Chromium-family profile."""
+    """[{browser, cmd, dir, name, email}] for every installed Chromium-family profile."""
     found = []
-    for label, data_dir, exes in CHROMIUM_BROWSERS:
-        exe = next((shutil.which(e) for e in exes if shutil.which(e)), None)
+    for label, data_dir, names in CHROMIUM_BROWSERS:
+        cmd = launcher(names)
         try:
             with open(os.path.join(os.path.expanduser(data_dir), "Local State")) as f:
                 cache = json.load(f).get("profile", {}).get("info_cache", {})
         except (OSError, ValueError):
             continue
-        if not exe:
+        if not cmd:
             continue
         for directory, info in sorted(cache.items()):
             found.append(
                 {
                     "browser": label,
-                    "exe": exe,
+                    "cmd": cmd,
                     "dir": directory,
                     "name": info.get("name") or directory,
                     "email": info.get("user_name") or "",
@@ -342,11 +365,12 @@ def cmd_configure(args):
             if choice.isdigit() and 0 <= int(choice) <= len(profiles):
                 break
         if choice == "0":
-            cfg.pop("browser", None)
+            # null, not absent: --keep-browser keeps the choice instead of asking again.
+            cfg["browser"] = None
             cfg.pop("browser_label", None)
         else:
             p = profiles[int(choice) - 1]
-            cfg["browser"] = [p["exe"], "--profile-directory=" + p["dir"]]
+            cfg["browser"] = p["cmd"] + ["--profile-directory=" + p["dir"]]
             cfg["browser_label"] = "%s · %s%s" % (
                 p["browser"],
                 p["name"],
